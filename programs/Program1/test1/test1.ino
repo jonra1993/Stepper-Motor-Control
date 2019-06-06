@@ -31,6 +31,11 @@ enum Direction {
 };
 int count = 0;
 
+void ICACHE_RAM_ATTR onTimerISR(){
+    digitalWrite(LED2,!(digitalRead(LED2)));  //Toggle LED Pin
+    timer1_write(600000);//12us
+}
+
 void setup() {
   // Pins Setup
   pinMode(MS1,OUTPUT);
@@ -39,6 +44,7 @@ void setup() {
   pinMode(STEP,OUTPUT);
   pinMode(DIR,OUTPUT);
   pinMode(LED1,OUTPUT);
+  pinMode(LED2,OUTPUT);
 
 
   // Serial communication setup
@@ -50,7 +56,10 @@ void setup() {
 
     // Call Time Elapsed function after that time have elapsed
   //timer.attach(0.005f, TimeElapsed);
-  timer.attach_ms(10, TimeElapsed); //ciclo is the double  
+  timer.attach_ms(1000, TimeElapsed); //ciclo is the double  
+  timer1_attachInterrupt(onTimerISR);
+  timer1_enable(TIM_DIV16, TIM_EDGE, TIM_SINGLE);
+  timer1_write(600000); //120000 us
 }
 
 void loop() {
@@ -65,6 +74,8 @@ void loop() {
  * TimeElapsed Function
  *
  ***************************************************************************/
+
+
 void TimeElapsed() {
   count++;
   digitalWrite(LED1,!digitalRead(LED1));
