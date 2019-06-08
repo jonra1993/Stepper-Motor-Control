@@ -49,10 +49,35 @@ public:
 		COUNTERCLOCKWISE= 1
 		};
 
+		/*! \brief Holding data used by timer interrupt for speed ramp calculation.
+		*
+		*  Contains data used by timer interrupt to calculate speed profile.
+		*  Data is written to it by move(), when stepper motor is moving (timer
+		*  interrupt running) data is read/updated when calculating a new step_delay
+		*/
+		typedef struct {
+		//! What part of the speed ramp we are in.
+		unsigned char run_state : 3;
+		//! Direction stepper motor should move.
+		unsigned char dir : 1;
+		//! Peroid of next timer delay. At start this value set the accelration rate.
+		unsigned int step_delay;
+		//! What step_pos to start decelaration
+		unsigned int decel_start;
+		//! Sets deceleration rate.
+		signed int decel_val;
+		//! Minimum time delay (max speed)
+		signed int min_delay;
+		//! Counter used when accelerateing/decelerateing to calculate step_delay.
+		signed int accel_count;
+		} speedRampData;
+
 		StepperDriver();
 		StepperDriver(short dir_pin, short step_pin, short ms1_pin, short ms2_pin, short ms3_pin);
 		void DirectionChooser(Direction direction);
 		void StepChooser(Steps step);
+		void SpeedCntrMove(signed int step, unsigned int accel, unsigned int decel, unsigned int speed)
+
 };
 
 
