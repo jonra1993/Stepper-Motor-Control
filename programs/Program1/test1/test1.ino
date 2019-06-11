@@ -5,7 +5,7 @@
 
 
 
-enum Pins {
+enum Pin {
   LED1 = 2,     //D4
   LED2 = 16,    //D0
 	MS1 = 5,      //D1
@@ -20,18 +20,13 @@ enum Constants {
 };
 
 Ticker timer;
-StepperDriver driver1(Pins::DIR, Pins::STEP, Pins::MS1, Pins::MS2, Pins::MS3);
+StepperDriver driver1(Pin::DIR, Pin::STEP, Pin::MS1, Pin::MS2, Pin::MS3);
 
 int count = 0;
 
-void ICACHE_RAM_ATTR onTimerISR(){
-    digitalWrite(LED2,!(digitalRead(LED2)));  //Toggle LED Pin
-    timer1_write(600000);//12us
-}
-
 void setup() {
-	pinMode(Pins::LED1,OUTPUT);
-	pinMode(Pins::LED2,OUTPUT);
+	pinMode(Pin::LED1,OUTPUT);
+	pinMode(Pin::LED2,OUTPUT);
   driver1.DirectionChooser(StepperDriver::Direction::CLOCKWISE);
   driver1.StepChooser(StepperDriver::Steps::SIXTEENTH);
 
@@ -44,13 +39,10 @@ void setup() {
     // Call Time Elapsed function after that time have elapsed
   //timer.attach(0.005f, TimeElapsed);
   timer.attach_ms(1000, TimeElapsed); //ciclo is the double  
-  timer1_attachInterrupt(onTimerISR);
-  timer1_enable(TIM_DIV16, TIM_EDGE, TIM_SINGLE);
-  timer1_write(600000); //120000 us
+  driver1.StartTimer();
 }
 
 void loop() {
-
 
 }
 

@@ -11,6 +11,8 @@
 #ifndef STEPPERDRIVER_H
 #define STEPPERDRIVER_H
 #include <Arduino.h>
+#include <Ticker.h>
+#include <ESP8266WiFi.h>
 
 ///////////////////    STEPPER MOTOR TYPE SETUP
 #define STEPPER_DEGREES			1.8
@@ -22,6 +24,7 @@
 #define EIGHTH_STEP_THRESHOLD		10000  	// (1/8) microseconds
 #define SIXTEENTH_STEP_THRESHOLD	1000000	// (1/16) microseconds
 
+void ICACHE_RAM_ATTR onTimerISR();
 
 class StepperDriver {
 protected:
@@ -37,17 +40,40 @@ private:
 
 public:
 		enum Steps {
-		FULL = 0,
-		HALF = 1,
-		QUARTER = 2,
-		EIGHTH = 3,
-		SIXTEENTH = 4
+			FULL = 0,
+			HALF = 1,
+			QUARTER = 2,
+			EIGHTH = 3,
+			SIXTEENTH = 4
 		};
 		
 		enum Direction {
-		CLOCKWISE = 0,
-		COUNTERCLOCKWISE= 1
+			CLOCKWISE = 0,
+			COUNTERCLOCKWISE= 1
 		};
+
+		// Speed ramp states
+		enum States {
+			STOP = 0,
+			ACCEL= 1,
+			DECEL= 2,
+			RUN= 3
+		};
+
+		// Timer/Counter at 500kHz (2uS). (T1-FREQ 500000)
+		int T1_FREQ = 500000;
+		int T1_Period = (int)(1/(float)T1_FREQ);
+		//! Number of (full)steps per round on stepper motor in use.
+		short FSPR = 200;
+		//! Steps per round on stepper motor in use.
+		short SPR = FSPR;
+		
+		float	ALPHA= (2*3.14159/SPR);                // 2*pi/spr
+		long	A_T_x100= ((long)(ALPHA*T1_FREQ*100));     // (ALPHA / T1_FREQ)*100
+		int	T1_FREQ_148= ((int)((0.676*T1_FREQ)/100)); // divided by 100 and scaled by 0.676
+		long	A_SQ= (long)(2*ALPHA*10000000000);         // ALPHA*2*10000000000
+		int	A_x20000= (int)(ALPHA*20000);  
+		
 
 		/*! \brief Holding data used by timer interrupt for speed ramp calculation.
 		*
@@ -55,7 +81,7 @@ public:
 		*  Data is written to it by move(), when stepper motor is moving (timer
 		*  interrupt running) data is read/updated when calculating a new step_delay
 		*/
-		typedef struct {
+		struct speedRampData {
 		//! What part of the speed ramp we are in.
 		unsigned char run_state : 3;
 		//! Direction stepper motor should move.
@@ -70,13 +96,23 @@ public:
 		signed int min_delay;
 		//! Counter used when accelerateing/decelerateing to calculate step_delay.
 		signed int accel_count;
-		} speedRampData;
+		} ;
+
+		struct GLOBAL_FLAGS {
+			//! True when stepper motor is running.
+			unsigned char running:1;
+			//! True when uart has received a string (ended with '/r').
+			unsigned char cmd:1;
+			//! Dummy bits to fill up a byte.
+			unsigned char dummy:6;
+		};	
 
 		StepperDriver();
 		StepperDriver(short dir_pin, short step_pin, short ms1_pin, short ms2_pin, short ms3_pin);
 		void DirectionChooser(Direction direction);
 		void StepChooser(Steps step);
-		void SpeedCntrMove(signed int step, unsigned int accel, unsigned int decel, unsigned int speed)
+		void StartTimer();
+		void SpeedCntrMove(signed int step, unsigned int accel, unsigned int decel, unsigned int speed);
 
 };
 

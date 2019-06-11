@@ -11,7 +11,78 @@
 #include "StepperDriver.h"
 
 //! Cointains data for timer interrupt.
-speedRampData srd;
+StepperDriver::speedRampData speedrd;
+StepperDriver::GLOBAL_FLAGS status;
+
+void ICACHE_RAM_ATTR onTimerISR(){
+  // Holds next delay period.
+  unsigned int new_step_delay;
+  // Remember the last step delay used when accelrating.
+  static int last_accel_delay;
+  // Counting steps when moving.
+  static unsigned int step_count = 0;
+  // Keep track of remainder from new_step-delay calculation to incrase accurancy
+  static unsigned int rest = 0;
+
+  OCR1A = speedrd.step_delay;
+
+  switch(speedrd.run_state) {
+    case StepperDriver::States::STOP:
+      step_count = 0;
+      rest = 0;
+      // Stop Timer/Counter 1.
+      timer1_detachInterrupt();
+      status.running = false;
+      break;
+
+    case StepperDriver::States::ACCEL:
+      sm_driver_StepCounter(speedrd.dir);
+      step_count++;
+      speedrd.accel_count++;
+      new_step_delay = speedrd.step_delay - (((2 * (long)speedrd.step_delay) + rest)/(4 * speedrd.accel_count + 1));
+      rest = ((2 * (long)speedrd.step_delay)+rest)%(4 * speedrd.accel_count + 1);
+      // Chech if we should start decelration.
+      if(step_count >= speedrd.decel_start) {
+        speedrd.accel_count = speedrd.decel_val;
+        speedrd.run_state = StepperDriver::States::DECEL;
+      }
+      // Chech if we hitted max speed.
+      else if(new_step_delay <= speedrd.min_delay) {
+        last_accel_delay = new_step_delay;
+        new_step_delay = speedrd.min_delay;
+        rest = 0;
+        speedrd.run_state = StepperDriver::States::RUN;
+      }
+      break;
+
+    case StepperDriver::States::RUN:
+      sm_driver_StepCounter(speedrd.dir);
+      step_count++;
+      new_step_delay = speedrd.min_delay;
+      // Chech if we should start decelration.
+      if(step_count >= speedrd.decel_start) {
+        speedrd.accel_count = speedrd.decel_val;
+        // Start decelration with same delay as accel ended with.
+        new_step_delay = last_accel_delay;
+        speedrd.run_state = StepperDriver::States::DECEL;
+      }
+      break;
+
+    case StepperDriver::States::DECEL:
+      sm_driver_StepCounter(speedrd.dir);
+      step_count++;
+      speedrd.accel_count++;
+      new_step_delay = speedrd.step_delay - (((2 * (long)speedrd.step_delay) + rest)/(4 * speedrd.accel_count + 1));
+      rest = ((2 * (long)speedrd.step_delay)+rest)%(4 * speedrd.accel_count + 1);
+      // Check if we at last step
+      if(speedrd.accel_count >= 0){
+        speedrd.run_state = StepperDriver::States::STOP;
+      }
+      break;
+  }
+  speedrd.step_delay = new_step_delay;
+  timer1_write(2);//2uS
+}
 
 /*
  * Constructors
@@ -19,11 +90,23 @@ speedRampData srd;
 
 StepperDriver::StepperDriver(){
 	// Pins Setup
-	pinMode(MS1,OUTPUT);
-	pinMode(MS2,OUTPUT);
-	pinMode(MS3,OUTPUT);
-	pinMode(STEP,OUTPUT);
-	pinMode(DIR,OUTPUT);
+	pinMode(StepperDriver::MS1,OUTPUT);
+	pinMode(StepperDriver::MS2,OUTPUT);
+	pinMode(StepperDriver::MS3,OUTPUT);
+	pinMode(StepperDriver::STEP,OUTPUT);
+	pinMode(StepperDriver::DIR,OUTPUT);
+}
+/*! \brief Init of Timer/Counter1.
+ *
+ *  Set up Timer/Counter1 to use mode 1 CTC and
+ *  enable Output Compare A Match Interrupt.
+ */
+void StepperDriver::StartTimer(){
+  // Tells what part of speed ramp we are in.
+  speedrd.run_state = StepperDriver::States::STOP;
+  timer1_attachInterrupt(onTimerISR);
+  timer1_enable(TIM_DIV16, TIM_EDGE, TIM_SINGLE);
+  timer1_write(2); //2uS
 }
 StepperDriver::StepperDriver(short dir_pin, short step_pin, short ms1_pin, short ms2_pin, short ms3_pin){
 	// Pins Setup (Make a global copy)
@@ -39,7 +122,6 @@ StepperDriver::StepperDriver(short dir_pin, short step_pin, short ms1_pin, short
 	pinMode(StepperDriver::DIR ,OUTPUT);
 	
 }
-
 /***************************************************************************
  *
  * Direction Function
@@ -75,137 +157,41 @@ void StepperDriver::StepChooser(StepperDriver::Steps step = StepperDriver::Steps
     digitalWrite(MS1,LOW);
     digitalWrite(MS2,LOW);
     digitalWrite(MS3,LOW);
+    StepperDriver::SPR=StepperDriver::FSPR;
     break;
   case HALF:
     digitalWrite(MS1,HIGH);  
     digitalWrite(MS2,LOW);
     digitalWrite(MS3,LOW);
+    StepperDriver::SPR=StepperDriver::FSPR*2;
     break;
   case QUARTER:
     digitalWrite(MS1,LOW);
     digitalWrite(MS2,HIGH);
     digitalWrite(MS3,LOW);
+    StepperDriver::SPR=StepperDriver::FSPR*4;
     break;
   case EIGHTH:
     digitalWrite(MS1,HIGH);
     digitalWrite(MS2,HIGH);
     digitalWrite(MS3,LOW);
+    StepperDriver::SPR=StepperDriver::FSPR*8;
     break;
   case SIXTEENTH:
     digitalWrite(MS1,HIGH);
     digitalWrite(MS2,HIGH);
     digitalWrite(MS3,HIGH);
+    StepperDriver::SPR=StepperDriver::FSPR*16;
     break;
-  
   default:
     digitalWrite(MS1,LOW);
     digitalWrite(MS2,LOW);
     digitalWrite(MS3,LOW);
+    StepperDriver::SPR=StepperDriver::FSPR;
     break;
   }
 }
-
-/*! \brief Move the stepper motor a given number of steps.
- *
- *  Makes the stepper motor move the given number of steps.
- *  It accelrate with given accelration up to maximum speed and decelerate
- *  with given deceleration so it stops at the given step.
- *  If accel/decel is to small and steps to move is to few, speed might not
- *  reach the max speed limit before deceleration starts.
- *
- *  \param step  Number of steps to move (pos - CW, neg - CCW).
- *  \param accel  Accelration to use, in 0.01*rad/sec^2.
- *  \param decel  Decelration to use, in 0.01*rad/sec^2.
- *  \param speed  Max speed, in 0.01*rad/sec.
- */
 void StepperDriver::SpeedCntrMove(signed int step, unsigned int accel, unsigned int decel, unsigned int speed)
 {
-  //! Number of steps before we hit max speed.
-  unsigned int max_s_lim;
-  //! Number of steps before we must start deceleration (if accel does not hit max speed).
-  unsigned int accel_lim;
 
-  // Set direction from sign on step value.
-  if(step < 0){
-    srd.dir = CCW;
-    step = -step;
-  }
-  else{
-    srd.dir = CW;
-  }
-
-  // If moving only 1 step.
-  if(step == 1){
-    // Move one step...
-    srd.accel_count = -1;
-    // ...in DECEL state.
-    srd.run_state = DECEL;
-    // Just a short delay so main() can act on 'running'.
-    srd.step_delay = 1000;
-    status.running = TRUE;
-    OCR1A = 10;
-    // Run Timer/Counter 1 with prescaler = 8.
-    TCCR1B |= ((0<<CS12)|(1<<CS11)|(0<<CS10));
-  }
-  // Only move if number of steps to move is not zero.
-  else if(step != 0){
-    // Refer to documentation for detailed information about these calculations.
-
-    // Set max speed limit, by calc min_delay to use in timer.
-    // min_delay = (alpha / tt)/ w
-    srd.min_delay = A_T_x100 / speed;
-
-    // Set accelration by calc the first (c0) step delay .
-    // step_delay = 1/tt * sqrt(2*alpha/accel)
-    // step_delay = ( tfreq*0.676/100 )*100 * sqrt( (2*alpha*10000000000) / (accel*100) )/10000
-    srd.step_delay = (T1_FREQ_148 * sqrt(A_SQ / accel))/100;
-
-    // Find out after how many steps does the speed hit the max speed limit.
-    // max_s_lim = speed^2 / (2*alpha*accel)
-    max_s_lim = (long)speed*speed/(long)(((long)A_x20000*accel)/100);
-    // If we hit max speed limit before 0,5 step it will round to 0.
-    // But in practice we need to move atleast 1 step to get any speed at all.
-    if(max_s_lim == 0){
-      max_s_lim = 1;
-    }
-
-    // Find out after how many steps we must start deceleration.
-    // n1 = (n1+n2)decel / (accel + decel)
-    accel_lim = ((long)step*decel) / (accel+decel);
-    // We must accelrate at least 1 step before we can start deceleration.
-    if(accel_lim == 0){
-      accel_lim = 1;
-    }
-
-    // Use the limit we hit first to calc decel.
-    if(accel_lim <= max_s_lim){
-      srd.decel_val = accel_lim - step;
-    }
-    else{
-      srd.decel_val = -((long)max_s_lim*accel)/decel;
-    }
-    // We must decelrate at least 1 step to stop.
-    if(srd.decel_val == 0){
-      srd.decel_val = -1;
-    }
-
-    // Find step to start decleration.
-    srd.decel_start = step + srd.decel_val;
-
-    // If the maximum speed is so low that we dont need to go via accelration state.
-    if(srd.step_delay <= srd.min_delay){
-      srd.step_delay = srd.min_delay;
-      srd.run_state = RUN;
-    }
-    else{
-      srd.run_state = ACCEL;
-    }
-
-    // Reset counter.
-    srd.accel_count = 0;
-    status.running = TRUE;
-    OCR1A = 10;
-    // Set Timer/Counter to divide clock by 8
-    TCCR1B |= ((0<<CS12)|(1<<CS11)|(0<<CS10));
-  }
 }
